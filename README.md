@@ -9,7 +9,7 @@ this repository showcases a production-ready serverless backend built to handle 
 
 ## architecture diagram
 
-![architecture diagram](AWS-2-Project-Manara.drawio.png)
+![architecture diagram](MANARA_PROJECT.png)
 
 ## workflow breakdown
 
