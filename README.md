@@ -1,3 +1,4 @@
+```markdown
 serverless cloud-native restful api with cognitive security and edge defense
 
 aws solutions architect associate graduation project.
@@ -8,7 +9,7 @@ this repository showcases a production-ready serverless backend built to handle 
 
 ## architecture diagram
 
-![architecture diagram](MANARA_PROJECT.png)
+![architecture diagram](AWS-2-Project-Manara.drawio.png)
 
 ## workflow breakdown
 
@@ -69,3 +70,92 @@ aws dynamodb create-table \
         AttributeName=userId,KeyType=HASH \
         AttributeName=itemId,KeyType=RANGE \
     --billing-mode PAY_PER_REQUEST
+
+```
+
+### 2. set up amazon cognito
+
+```bash
+user_pool_id=$(aws cognito-idp create-user-pool \
+    --pool-name serverless-api-userpool \
+    --auto-verified-attributes email \
+    --query 'UserPool.Id' --output text)
+
+client_id=$(aws cognito-idp create-user-pool-client \
+    --user-pool-id $user_pool_id \
+    --client-name serverless-web-client \
+    --no-generate-secret \
+    --explicit-auth-flows USER_PASSWORD_AUTH \
+    --query 'UserPoolClient.ClientId' --output text)
+
+```
+
+### 3. deploy the lambda compute function
+
+```bash
+cd backend/
+zip -r function.zip lambda_function.py
+
+aws lambda create-function \
+    --function-name records-api-handler \
+    --runtime python3.12 \
+    --handler lambda_function.lambda_handler \
+    --role arn:aws:iam::<ACCOUNT_ID>:role/LambdaServerlessDynamoDBRole \
+    --zip-file fileb://function.zip \
+    --environment "Variables={TABLE_NAME=serverless-records-table}" \
+    --tracing-config Mode=Active
+
+```
+
+### 4. configure api gateway and authorizer
+
+```bash
+api_id=$(aws apigateway create-rest-api \
+    --name records-service-api \
+    --query 'id' --output text)
+
+aws apigateway create-authorizer \
+    --rest-api-id $api_id \
+    --name CognitoAuth \
+    --type COGNITO_USER_POOLS \
+    --provider-arns arn:aws:cognito-idp:<REGION>:<ACCOUNT_ID>:userpool/$user_pool_id \
+    --identity-source method.request.header.Authorization
+
+```
+
+---
+
+## verification and testing
+
+### authenticate and fetch token
+
+```bash
+token=$(aws cognito-idp initiate-auth \
+    --auth-flow USER_PASSWORD_AUTH \
+    --client-id $client_id \
+    --auth-parameters USERNAME=testuser@example.com,PASSWORD=Password123! \
+    --query 'AuthenticationResult.IdToken' --output text)
+
+```
+
+### create a test record
+
+```bash
+curl -X POST https://<api-id>.execute-api.<region>[.amazonaws.com/prod/items](https://.amazonaws.com/prod/items) \
+     -H "Authorization: Bearer $token" \
+     -H "Content-Type: application/json" \
+     -d '{"itemId":"item_1","title":"cloud architecture note","description":"testing serverless deployment"}'
+
+```
+
+### retrieve all records
+
+```bash
+curl -X GET https://<api-id>.execute-api.<region>[.amazonaws.com/prod/items](https://.amazonaws.com/prod/items) \
+     -H "Authorization: Bearer $token"
+
+```
+
+```
+
+```
