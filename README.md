@@ -45,18 +45,10 @@ api endpoints
 - get /items/{id}: fetch a single item by id (auth required: yes, bearer token)
 - delete /items/{id}: delete an item by id (auth required: yes, bearer token)
 
-all in one deployment and testing script
+step-by-step deployment guide
 
-save the following script as deploy.sh and run it to set up the entire infrastructure and test the api automatically:
+1. create the dynamodb table
 
-```bash
-#!/bin/bash
-set -e
-
-region="us-east-1"
-account_id=$(aws sts get-caller-identity --query 'Account' --output text)
-
-echo "1. creating dynamodb table..."
 aws dynamodb create-table \
     --table-name serverless-records-table \
     --attribute-definitions \
@@ -65,9 +57,10 @@ aws dynamodb create-table \
     --key-schema \
         AttributeName=userId,KeyType=HASH \
         AttributeName=itemId,KeyType=RANGE \
-    --billing-mode PAY_PER_REQUEST || echo "table might already exist"
+    --billing-mode PAY_PER_REQUEST
 
-echo "2. creating cognito user pool and client..."
+2. create cognito user pool & client
+
 user_pool_id=$(aws cognito-idp create-user-pool \
     --pool-name serverless-api-userpool \
     --auto-verified-attributes email \
@@ -80,10 +73,8 @@ client_id=$(aws cognito-idp create-user-pool-client \
     --explicit-auth-flows USER_PASSWORD_AUTH \
     --query 'UserPoolClient.ClientId' --output text)
 
-echo "user pool id: $user_pool_id"
-echo "client id: $client_id"
+3. deploy the lambda backend
 
-echo "3. deploying lambda backend..."
 cd backend/
 zip -r function.zip lambda_function.py
 
@@ -91,14 +82,13 @@ aws lambda create-function \
     --function-name records-api-handler \
     --runtime python3.12 \
     --handler lambda_function.lambda_handler \
-    --role arn:aws:iam::${account_id}:role/LambdaServerlessDynamoDBRole \
+    --role arn:aws:iam::<ACCOUNT_ID>:role/LambdaServerlessDynamoDBRole \
     --zip-file fileb://function.zip \
     --environment "Variables={TABLE_NAME=serverless-records-table}" \
-    --tracing-config Mode=Active || echo "lambda might already exist"
+    --tracing-config Mode=Active
 
-cd ..
+4. configure api gateway rest api
 
-echo "4. configuring api gateway rest api..."
 api_id=$(aws apigateway create-rest-api \
     --name records-service-api \
     --query 'id' --output text)
@@ -107,7 +97,27 @@ aws apigateway create-authorizer \
     --rest-api-id $api_id \
     --name CognitoAuth \
     --type COGNITO_USER_POOLS \
-    --provider-arns arn:aws:cognito-idp:${region}:${account_id}:userpool/$user_pool_id \
+    --provider-arns arn:aws:cognito-idp:<REGION>:<ACCOUNT_ID>::userpool/$user_pool_id \
     --identity-source method.request.header.Authorization
 
-echo "deployment completed successfully!"
+testing the api
+
+1. authenticate with cognito to get a jwt token
+
+token=$(aws cognito-idp initiate-auth \
+    --auth-flow USER_PASSWORD_AUTH \
+    --client-id $client_id \
+    --auth-parameters USERNAME=testuser@example.com,PASSWORD=Password123! \
+    --query 'AuthenticationResult.IdToken' --output text)
+
+2. create a record
+
+curl -X POST https://<api-id>.execute-api.<region>.amazonaws.com/prod/items \
+     -H "Authorization: Bearer $token" \
+     -H "Content-Type: application/json" \
+     -d '{"itemId":"item_1","title":"test item","description":"testing serverless api"}'
+
+3. get all records
+
+curl -X GET https://<api-id>.execute-api.<region>.amazonaws.com/prod/items \
+     -H "Authorization: Bearer $token"
