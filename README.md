@@ -1,54 +1,65 @@
-serverless rest api with cognito, dynamodb and waf
+serverless cloud-native restful api with cognitive security and edge defense
 
-graduation project for the aws solutions architect associate track.
+aws solutions architect associate graduation project.
 
-this project implements a serverless rest api that lets authenticated users securely create, read, and delete personal records. it utilizes amazon api gateway, aws lambda, and amazon dynamodb, with user authentication handled by amazon cognito and perimeter edge protection managed by aws waf.
+this repository showcases a production-ready serverless backend built to handle secure user-specific data operations. by leveraging fully managed aws services, the application achieves elastic scaling, millisecond data retrieval, and robust edge-to-database protection without provisioning any servers.
 
-architecture diagram
+---
 
-![architecture diagram](MANARA PROJECT.png)
+## architecture diagram
 
-how it works
+![architecture diagram](MANARA_PROJECT.png)
 
-1. the user requests static frontend assets hosted on amazon s3 through amazon cloudfront.
-2. the user authenticates via an amazon cognito user pool, which validates credentials and returns a secure json web token access or id token.
-3. the user sends https api requests containing the bearer token to amazon api gateway.
-4. aws waf inspects incoming traffic at the edge to block malicious payloads, mitigate automated threats, and enforce ip rate limits.
-5. amazon api gateway validates the jwt token signature natively using the built-in cognito authorizer.
-6. api gateway invokes the backend aws lambda function using proxy integration.
-7. the lambda function executes crud operations against the amazon dynamodb table, strictly scoped to the caller's unique user id.
-8. telemetry data, access logs, and distributed trace segments are streamed continuously to amazon cloudwatch and aws x-ray.
+## workflow breakdown
 
-tech stack and aws services
+1. static assets for the frontend interface are retrieved via amazon cloudfront from an amazon s3 bucket origin.
+2. users authenticate through an amazon cognito user pool, obtaining a signed jwt bearer token upon successful verification.
+3. incoming https requests hit the amazon api gateway endpoint carrying the authorization token.
+4. aws waf inspects traffic at the network perimeter, mitigating potential layer-7 attacks and enforcing strict throttling rules.
+5. api gateway authenticates the payload instantly using its built-in cognito authorizer integration.
+6. validated requests trigger a purpose-built aws lambda compute function using proxy integration.
+7. the python backend executes granular persistence actions against an amazon dynamodb table, isolating records per user.
+8. operational insights, metrics, and trace maps are continuously forwarded to amazon cloudwatch and aws x-ray.
 
-- amazon s3 and cloudfront: static file hosting and global content delivery via edge locations.
-- aws waf: edge security enforcing owasp top 10 rules and strict ip rate-limiting.
-- amazon cognito: identity directory, user sign-up and sign-in flows, and secure jwt token issuance.
-- amazon api gateway: fully managed rest api endpoints with native cognito authorizer integration and request validation.
-- aws lambda (python 3.12): serverless backend compute running core business logic.
-- amazon dynamodb: single-table nosql data store configured with on-demand capacity.
-- aws x-ray and cloudwatch: application performance monitoring, log aggregation, and end-to-end distributed tracing.
+---
 
-database design
+## core tech stack
 
-the project uses a single dynamodb table designed for optimal access patterns and strict tenant isolation:
+- amazon s3 & cloudfront: high-performance static hosting and global content delivery network.
+- aws waf: edge firewall providing owasp protection and request rate-limiting.
+- amazon cognito: managed user identity directory and token issuer.
+- amazon api gateway: fully managed rest routing layer with integrated authorizers.
+- aws lambda (python 3.12): event-driven serverless computing runtime.
+- amazon dynamodb: single-table nosql database with pay-per-request scaling.
+- aws x-ray & cloudwatch: comprehensive distributed tracing and logging facilities.
+
+---
+
+## data model design
+
+the database layer relies on a single dynamodb table optimized for single-digit millisecond latency and absolute data separation:
+
 - table name: serverless-records-table
 - billing mode: on-demand (pay per request)
-- partition key (userid): string (maps directly to the cognito sub claim)
-- sort key (itemid): string (unique identifier for each individual record)
-- item attributes: title (string), description (string), createdat (string)
+- partition key (userid): string (derived directly from the cognito user sub claim)
+- sort key (itemid): string (unique record identifier)
+- attributes: title (string), description (string), createdat (string)
 
-api endpoints
+---
 
-- post /items: create a new item for the authenticated user (auth required: yes, bearer token)
-- get /items: retrieve all items belonging to the caller (auth required: yes, bearer token)
-- get /items/{id}: fetch a single item by id (auth required: yes, bearer token)
-- delete /items/{id}: delete an item by id (auth required: yes, bearer token)
+## rest api routes
 
-step-by-step deployment guide
+- post /items: register a new record entry for the signed-in user (requires bearer token)
+- get /items: fetch all records belonging to the current caller (requires bearer token)
+- get /items/{id}: retrieve a specific record by its identifier (requires bearer token)
+- delete /items/{id}: remove a specific record permanently (requires bearer token)
 
-1. create the dynamodb table
+---
 
+## deployment automation guide
+
+### 1. provision the dynamodb table
+```bash
 aws dynamodb create-table \
     --table-name serverless-records-table \
     --attribute-definitions \
@@ -58,66 +69,3 @@ aws dynamodb create-table \
         AttributeName=userId,KeyType=HASH \
         AttributeName=itemId,KeyType=RANGE \
     --billing-mode PAY_PER_REQUEST
-
-2. create cognito user pool & client
-
-user_pool_id=$(aws cognito-idp create-user-pool \
-    --pool-name serverless-api-userpool \
-    --auto-verified-attributes email \
-    --query 'UserPool.Id' --output text)
-
-client_id=$(aws cognito-idp create-user-pool-client \
-    --user-pool-id $user_pool_id \
-    --client-name serverless-web-client \
-    --no-generate-secret \
-    --explicit-auth-flows USER_PASSWORD_AUTH \
-    --query 'UserPoolClient.ClientId' --output text)
-
-3. deploy the lambda backend
-
-cd backend/
-zip -r function.zip lambda_function.py
-
-aws lambda create-function \
-    --function-name records-api-handler \
-    --runtime python3.12 \
-    --handler lambda_function.lambda_handler \
-    --role arn:aws:iam::<ACCOUNT_ID>:role/LambdaServerlessDynamoDBRole \
-    --zip-file fileb://function.zip \
-    --environment "Variables={TABLE_NAME=serverless-records-table}" \
-    --tracing-config Mode=Active
-
-4. configure api gateway rest api
-
-api_id=$(aws apigateway create-rest-api \
-    --name records-service-api \
-    --query 'id' --output text)
-
-aws apigateway create-authorizer \
-    --rest-api-id $api_id \
-    --name CognitoAuth \
-    --type COGNITO_USER_POOLS \
-    --provider-arns arn:aws:cognito-idp:<REGION>:<ACCOUNT_ID>::userpool/$user_pool_id \
-    --identity-source method.request.header.Authorization
-
-testing the api
-
-1. authenticate with cognito to get a jwt token
-
-token=$(aws cognito-idp initiate-auth \
-    --auth-flow USER_PASSWORD_AUTH \
-    --client-id $client_id \
-    --auth-parameters USERNAME=testuser@example.com,PASSWORD=Password123! \
-    --query 'AuthenticationResult.IdToken' --output text)
-
-2. create a record
-
-curl -X POST https://<api-id>.execute-api.<region>.amazonaws.com/prod/items \
-     -H "Authorization: Bearer $token" \
-     -H "Content-Type: application/json" \
-     -d '{"itemId":"item_1","title":"test item","description":"testing serverless api"}'
-
-3. get all records
-
-curl -X GET https://<api-id>.execute-api.<region>.amazonaws.com/prod/items \
-     -H "Authorization: Bearer $token"
